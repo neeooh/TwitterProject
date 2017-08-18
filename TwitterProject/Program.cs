@@ -17,7 +17,6 @@ namespace TwitterProject
     {
         static void Main(string[] args)
         {
-            //To-Do
             // Run the program in the loop, asking the user if he wants to process next folder
             Queue<string> rootDirQueue = new Queue<string>();
             bool stillDirInput = true;
