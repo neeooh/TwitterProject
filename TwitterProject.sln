@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio 15
+VisualStudioVersion = 15.0.26430.13
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TwitterProject", "TwitterProject\TwitterProject.csproj", "{71A79705-5BC5-427C-B982-4CBA6E156862}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TwitterArchiveParser", "TwitterProject\TwitterArchiveParser.csproj", "{71A79705-5BC5-427C-B982-4CBA6E156862}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TouristFilter", "TouristFilter\TouristFilter.csproj", "{CFA01AC4-A07F-4DBD-9B1D-783B0248A6D0}"
 	ProjectSection(ProjectDependencies) = postProject

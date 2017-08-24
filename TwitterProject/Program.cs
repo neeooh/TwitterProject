@@ -57,12 +57,13 @@ namespace TwitterProject
         {
             //Thread safe collection of Tweets which passed the filter criteria
             Stopwatch watch = Stopwatch.StartNew();
-            ConcurrentBag<SingleTweet> geoTaggedTweetsBag = new ConcurrentBag<SingleTweet>();
-            ConcurrentBag<SingleTweet> geoTaggedTweetsInPolygonBag = new ConcurrentBag<SingleTweet>();
             string failedPaths = "";
-            int tweetsReadCounter = 0;
-            int tweetsReadCounter2 = 0;
-
+            int tweetsReadCount = 0;
+            int geoTweetsCount = 0;
+            int geoTweetsInPolygonCount = 0;
+            int filesReadCount = 0;
+            JsonWriter jsonWriter = new JsonWriter(path + "_geotagged.json"); 
+            JsonWriter jsonWriter2 = new JsonWriter(path + "_geotagged_in_polygon.json");
 
             DirectoryInfo JsonFileFolder = new DirectoryInfo(path);
             
@@ -76,65 +77,69 @@ namespace TwitterProject
 
             //In Parallel:
             //Decompress each .bz2 file, read lines and extract tweets with embedded geo-location
-            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = -1 }, (file) =>
+            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = 12 }, (file) =>
             {
-                Console.WriteLine("Processing {0}", file.FileDir.FullName);
+                ConcurrentBag<SingleTweet> geoTaggedTweetsBag = new ConcurrentBag<SingleTweet>();
+                ConcurrentBag<SingleTweet> geoTaggedTweetsInPolygonBag = new ConcurrentBag<SingleTweet>();
 
+                Console.WriteLine("Processing {0}", file.FileDir.FullName);
+                
                 //Open file stream to a compressed bz2 file
                 using (FileStream compressedStream = new FileStream(file.FileDir.FullName, FileMode.Open))
                 {
-                    //Create a byte buffer holding uncompressed stream bytes
-                    //For safety purposes the length of uncompressed stream is 30 to account the size increase when file is decompressed
-                    //There must be a better way to do it, BZip2.Decompress doesnt seem to accept resizable buffers?
-                    //Memory is not a big issue for now anyway
-                    byte[] uncompressedBuffer = new byte[compressedStream.Length * 20];
-
-                    //Creates memory stream to hold the uncompressed data           
-                    MemoryStream uncompressedStream = new MemoryStream(uncompressedBuffer);
-
-                    //Decompresses into memory stream which stores bytes in uncompressedBuffer
                     try
                     {
-                        BZip2.Decompress(compressedStream, uncompressedStream, true);
-                    }
-                    catch (Exception e)
-                    {
-                        failedPaths += file.FileDir.DirectoryName + "-" + file.FileDir.FullName + " \n";
-                    }
-                    //Long string containing the uncompressed data
-                    string sUncompressed = Encoding.UTF8.GetString(uncompressedBuffer);
-
-                    //Read Lines where each line represents a tweet
-                    var inputLines = new BlockingCollection<string>();
-
-                    var readLines = Task.Factory.StartNew(() =>
-                    {
+                        //Read Lines where each line represents a tweet
+                        var inputLines = new BlockingCollection<string>();
+                        Task readLines = null;
                         try
                         {
-                            //Split the string into lines and add them to a list
-                            var result = Regex.Split(sUncompressed, "\r\n|\r|\n");
-                            foreach (var line in result)
+                            byte[] uncompressedBuffer = new byte[compressedStream.Length * 20];
+
+                            //Create a byte buffer holding uncompressed stream bytes
+                            //uncompressedBuffer = new byte[compressedStream.Length * 10];
+
+                            //Creates memory stream to hold the uncompressed data           
+                            MemoryStream uncompressedStream = new MemoryStream(uncompressedBuffer);
+
+                            //Decompresses into memory stream which stores bytes in uncompressedBuffer
+                            BZip2.Decompress(compressedStream, uncompressedStream, true);
+
+                            //Long string containing the uncompressed data
+                            string sUncompressed = Encoding.UTF8.GetString(uncompressedBuffer);
+
+                            readLines = Task.Factory.StartNew(() =>
                             {
-                                Interlocked.Increment(ref tweetsReadCounter);
-                                tweetsReadCounter2++;
-                                inputLines.Add(line);
-                            }
-                            inputLines.CompleteAdding();
+                                try
+                                {
+                                //Split the string into lines and add them to a list
+                                var result = Regex.Split(sUncompressed, "\r\n|\r|\n");
+                                    foreach (var line in result)
+                                    {
+                                        inputLines.Add(line);
+                                    }
+                                    inputLines.CompleteAdding();
+                                }
+                                catch (Exception e)
+                                {
+                                    Console.WriteLine("Exception occured while splitting a line from uncompressed text stream.");
+                                }
+
+                            });
                         }
                         catch (Exception e)
                         {
-                            Console.WriteLine("Exception occured while splitting a line from uncompressed text stream.");
+                            failedPaths += file.FileDir.DirectoryName + "-" + file.FileDir.FullName + "\n" + e + "\n";
                         }
-                             
-                    });
 
-                    //Try to deserialize each JSON text line from the list
-                    var processLines = Task.Factory.StartNew(() =>
-                    {
-                        Parallel.ForEach(inputLines.GetConsumingEnumerable(), line =>
-                        { 
-                            try
+
+                        //Try to deserialize each JSON text line from the list
+                        var processLines = Task.Factory.StartNew(() =>
+                        {
+                            Parallel.ForEach(inputLines.GetConsumingEnumerable(), line =>
                             {
+                                try
+                                {
                                 //Deserialize each line into a tweet object
                                 var tweet = JsonConvert.DeserializeObject<SingleTweet>(line);
 
@@ -142,51 +147,76 @@ namespace TwitterProject
 
                                 // We are only interested in geo-tagged tweets
                                 if (tweet.geo != null)
-                                {
+                                    {
                                     // If the tweet is geo-tagged add it to the list
                                     geoTaggedTweetsBag.Add(tweet);
 
-                                    if (PolygonFrame.pointInPolygon(tweet.geo.coordinates[0], tweet.geo.coordinates[1]))
-                                    {
-                                        geoTaggedTweetsInPolygonBag.Add(tweet);
+                                        if (PolygonFrame.pointInPolygon(tweet.geo.coordinates[0], tweet.geo.coordinates[1]))
+                                        {
+                                            geoTaggedTweetsInPolygonBag.Add(tweet);
+                                        }
                                     }
+
+                                // Increment the counter variable for a processes tweets
+                                Interlocked.Increment(ref tweetsReadCount);
                                 }
-                                          
-                            }
-                            catch (Exception e)
-                            {
+                                catch (Exception e)
+                                {
                                 // This exception occurs when you have a line that doesn't represent a tweet ({"created_at":) but a deleted tweet ({"delete":))
                                 //Console.WriteLine("Exception occured while processing a line in {0}{1}", path, file.FileDir.Name);
                             }
+                            });
                         });
-                    });
 
-                    //Wait till the file has been fully processed
-                    Task.WaitAll(readLines, processLines);
-                    Console.WriteLine("Finished reading " + file.FileDir.Name);
+                        //Wait till the file has been fully processed
+                        Task.WaitAll(readLines, processLines);
+                        Console.WriteLine("Finished reading " + file.FileDir.Name);
+                    }
+                    catch (Exception e)
+                    {
+                        // This exception occurs when there is unexpected end of stream (i.e. partialy corrupted file)
+                    }
+                }// end of using stream to open .bz2 file
+
+                //Save the geoTaggedTweetsBag object to .JSON file
+                //serializeToFile(path + "_geotagged.json", geoTaggedTweetsBag);
+                //serializeToFile(path + "_geotagged_in_polygon.json", geoTaggedTweetsInPolygonBag);
+
+                if (++filesReadCount == files.Count())
+                {
+                    jsonWriter.serialiseCollection(geoTaggedTweetsBag, true);
+                    jsonWriter2.serialiseCollection(geoTaggedTweetsInPolygonBag, true);
                 }
+                else
+                {
+                    jsonWriter.serialiseCollection(geoTaggedTweetsBag);
+                    jsonWriter2.serialiseCollection(geoTaggedTweetsInPolygonBag);
+                }
+               
+
+                // Update counters
+                geoTweetsCount += geoTaggedTweetsBag.Count;
+                geoTweetsInPolygonCount += geoTaggedTweetsInPolygonBag.Count;
             });
             
             watch.Stop();
-            //Task.WaitAll(fileTask);
-
-            //Save the geoTaggedTweetsBag object to .JSON file
-            serializeToFile(path + "_geotagged.json", geoTaggedTweetsBag);
-            serializeToFile(path + "_geotagged_in_polygon.json", geoTaggedTweetsInPolygonBag);
             //Save the statistics file
-            saveStatisticsFile(path, watch, tweetsReadCounter, geoTaggedTweetsBag.Count, geoTaggedTweetsInPolygonBag.Count, failedPaths);
+            saveStatisticsFile(path, watch, tweetsReadCount, geoTweetsCount, geoTweetsInPolygonCount, failedPaths);
+            //Task.WaitAll(fileTask);  
         }
+        
 
         public static void serializeToFile(string path, ConcurrentBag<SingleTweet> objectToSerialize)
         {
             //Serialize the concurrentBag (all geo-tagged tweets) and save it as a .JSON file
             using (StreamWriter sw = new StreamWriter(path))
             {
-                sw.Write(JsonConvert.SerializeObject(objectToSerialize, Formatting.Indented));
+                sw.WriteLineAsync(JsonConvert.SerializeObject(objectToSerialize, Formatting.Indented));
+               // sw.Write(JsonConvert.SerializeObject(objectToSerialize, Formatting.Indented));
             }
         }
 
-        private static void saveStatisticsFile(string rootPath, Stopwatch watch, int tweetsReadCounter, int geoTweetsCount, int geoTweetsInPolygonCount, string failedPaths)
+        private static void saveStatisticsFile(string rootPath, Stopwatch watch, int tweetsReadCount, int geoTweetsCount, int geoTweetsInPolygonCount, string failedPaths)
         {
             try
             {
@@ -199,20 +229,20 @@ namespace TwitterProject
                     sw.WriteLine("Filtered tweets are form path: {0}", rootPath);
                     sw.WriteLine("Finished executing in: {0}ms | {1}mins | {2}h", 
                         watch.ElapsedMilliseconds, watch.Elapsed.Minutes, watch.Elapsed.Hours);
-                    sw.WriteLine("totalProcessedTweets={0}", tweetsReadCounter);
+                    sw.WriteLine("totalProcessedTweets={0}", tweetsReadCount);
                     sw.WriteLine("geoTaggedTweets={0}", geoTweetsCount);
                     sw.WriteLine("geoTaggedTweetsInPolygon={0}", geoTweetsInPolygonCount);
                     sw.WriteLine("failedArchives=" + failedPaths);
                     sw.WriteLine("<End of file>");
                 }
 
-                Console.WriteLine(@"Saved filtered fies to " + rootPath + ".");
+                Console.WriteLine(@"Saved filtered files to " + rootPath + ".");
             }
             catch (Exception e)
             {
                 Console.WriteLine(@"Could not save to selected path. {0}. \nPlease try again.", e);
                 rootPath = Console.ReadLine();
-                saveStatisticsFile(rootPath, watch, tweetsReadCounter, geoTweetsCount, geoTweetsInPolygonCount, failedPaths);
+                saveStatisticsFile(rootPath, watch, tweetsReadCount, geoTweetsCount, geoTweetsInPolygonCount, failedPaths);
             }
         }
 

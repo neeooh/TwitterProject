@@ -50,9 +50,9 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\TwitterProject\TwitterProject.csproj">
+    <ProjectReference Include="..\TwitterProject\TwitterArchiveParser.csproj">
       <Project>{71a79705-5bc5-427c-b982-4cba6e156862}</Project>
-      <Name>TwitterProject</Name>
+      <Name>TwitterArchiveParser</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
